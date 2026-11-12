@@ -1,0 +1,16 @@
+{
+  "name": "classificacao-detalhada-v3",
+  "version": "3.0.0",
+  "description": "Addon Stremio que mostra classificacao indicativa detalhada",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.12",
+    "stremio-addon-sdk": "^1.7.1"
+  },
+  "engines": {
+    "node": "20.x"
+  }
+}
