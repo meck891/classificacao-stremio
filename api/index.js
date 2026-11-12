@@ -48,7 +48,7 @@ async function getClassificacaoBR(tmdbId, type) {
 async function getParentsGuideDetalhado(imdbId) {
     try {
         const res = await fetch(`https://www.imdb.com/title/${imdbId}/parentalguide/`, {
-            headers: { "User-Agent": "Mozilla/5.0", "Accept-Language": "en-US,en;q=0.9" }
+            headers: { "User-Agent": "Mozilla/5.0", "Accept-Language": "pt-BR,en;q=0.9" }
         });
         const html = await res.text();
         const $ = cheerio.load(html);
