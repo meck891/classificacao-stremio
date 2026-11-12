@@ -96,4 +96,20 @@ builder.defineMetaHandler(async ({ type, id }) => {
     return { meta: { id, type, description: descricao } };
 });
 
-module.exports = builder.getInterface();
+   const addonInterface = builder.getInterface();
+
+   module.exports = async (req, res) => {
+     res.setHeader('Access-Control-Allow-Origin', '*');
+     res.setHeader('Content-Type', 'application/json');
+     const url = (req.url || '/').split('?')[0];
+     if (url === '/manifest.json' || url === '/' || url === '') {
+       return res.json(addonInterface.manifest);
+     }
+     try {
+       const parts = url.replace(/^\//, '').split('/');
+       const result = await addonInterface.get(parts[0], parts[1], parts[2], req.query || {});
+       return res.json(result);
+     } catch (e) {
+       return res.status(500).json({ error: String(e.message || e) });
+     }
+   };
