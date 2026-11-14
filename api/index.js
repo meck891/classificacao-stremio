@@ -77,39 +77,42 @@ function traduzirTrecho(texto) {
 }
 
 builder.defineMetaHandler(async ({ type, id }) => {
-    if (cache.has(id)) return { meta: { id, type, description: cache.get(id) } };
-    const tmdbId = await getTmdbId(id, type);
-    const cert = tmdbId ? await getClassificacaoBR(tmdbId, type) : "";
-    const guide = await getParentsGuideDetalhado(id);
-    if (!cert && Object.keys(guide).length === 0) return { meta: null };
-    let certTexto = cert === "L" ? "Livre" : cert ? cert + "+" : "Sem classificação BR";
-    let descricao = `CLASSIFICAÇÃO INDICATIVA: ${certTexto}\n\n`;
-    if (Object.keys(guide).length > 0) {
-        descricao += `MOTIVO DETALHADO:\n`;
-        for (let [categoria, textos] of Object.entries(guide)) {
-            descricao += `\n🔞 ${categoria.toUpperCase()}:\n`;
-            for (let t of textos) descricao += `• ${traduzirTrecho(t)}\n`;
-        }
-    }
-    descricao += `\n---\nFonte: ClassInd Brasil + IMDb Parents Guide`;
-    cache.set(id, descricao);
-    return { meta: { id, type, description: descricao } };
+  if (type !== 'movie') return { meta: null };
+  try {
+    const KEY = 06bb8fc75a07bd501b3f716efbec5472
+
+    // 1. Acha o filme no TMDB pelo ID do IMDB (tt...)
+    const findRes = await fetch(`https://api.themoviedb.org/3/find/${id}?api_key=${KEY}&language=pt-BR&external_source=imdb_id`);
+    const find = await findRes.json();
+    const tmdbId = find.movie_results?.[0]?.id;
+    if (!tmdbId) return { meta: null };
+
+    // 2. Pega os detalhes + classificação do Brasil
+    const res = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${KEY}&language=pt-BR&append_to_response=release_dates`);
+    const m = await res.json();
+
+    const br = m.release_dates?.results?.find(r => r.iso_3166_1 === 'BR');
+    const cert = br?.release_dates?.[0]?.certification || 'Sem classificação';
+    const motivo = br?.release_dates?.[0]?.note || 'Consulte os detalhes do filme';
+
+    const descricao = `CLASSIFICAÇÃO INDICATIVA: ${cert}\nMOTIVO DETALHADO: ${motivo}\n\n${m.overview || ''}`;
+
+    return {
+      meta: {
+        id: id,
+        type: 'movie',
+        name: m.title,
+        description: descricao,
+        poster: m.poster_path ? 'https://image.tmdb.org/t/p/w500' + m.poster_path : undefined,
+        background: m.backdrop_path ? 'https://image.tmdb.org/t/p/original' + m.backdrop_path : undefined,
+        logo: undefined,
+        releaseInfo: String(m.release_date || '').slice(0,4),
+        runtime: String(m.runtime || ''),
+        genres: (m.genres || []).map(g => g.name),
+      }
+    };
+  } catch (e) {
+    console.error(e);
+    return { meta: null };
+  }
 });
-
-   const addonInterface = builder.getInterface();
-
-   module.exports = async (req, res) => {
-     res.setHeader('Access-Control-Allow-Origin', '*');
-     res.setHeader('Content-Type', 'application/json');
-     const url = (req.url || '/').split('?')[0];
-     if (url === '/manifest.json' || url === '/' || url === '') {
-       return res.json(addonInterface.manifest);
-     }
-     try {
-       const parts = url.replace(/^\//, '').split('/');
-       const result = await addonInterface.get(parts[0], parts[1], parts[2], req.query || {});
-       return res.json(result);
-     } catch (e) {
-       return res.status(500).json({ error: String(e.message || e) });
-     }
-   };
