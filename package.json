@@ -1,13 +1,13 @@
 {
   "name": "classificacao-stremio",
-  "version": "1.0.0",
-  "main": "index.js",
-  "license": "MIT",
+  "version": "3.1.0",
+  "description": "Addon de classificação indicativa brasileira para Stremio",
+  "private": true,
+  "main": "api/index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node api/index.js",
+    "test": "node --test"
   },
-  "dependencies": {
-    "cheerio": "^1.0.0",
-    "stremio-addon-sdk": "^1.6.0"
-  }
+  "engines": { "node": ">=20" },
+  "license": "MIT"
 }
