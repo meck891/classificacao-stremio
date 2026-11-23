@@ -1,118 +1,109 @@
-const { addonBuilder } = require("stremio-addon-sdk");
-const cheerio = require("cheerio");
+'use strict';
 
-const TMDB_API_KEY = process.env.TMDB_API_KEY || "";
-const TMDB_BASE = "https://api.themoviedb.org/3";
+const http = require('node:http');
 
 const manifest = {
-    id: "community.classificacao.detalhada.v3",
-    version: "3.0.0",
-    name: "Classificação Detalhada V3",
-    description: "Mostra classificação indicativa + motivo detalhado",
-    resources: ["meta"],
-    types: ["movie", "series"],
-    idPrefixes: ["tt"],
-    catalogs: []
+  id: 'community.classificacao.detalhada.v3',
+  version: '3.1.0',
+  name: 'Classificação Indicativa Brasil',
+  description: 'Classificação indicativa brasileira de filmes e séries, quando disponível no TMDB.',
+  resources: ['meta'],
+  types: ['movie', 'series'],
+  idPrefixes: ['tt'],
+  catalogs: []
 };
 
-const builder = new addonBuilder(manifest);
-const cache = new Map();
+class UpstreamError extends Error {}
 
-async function getTmdbId(imdbId, type) {
-    try {
-        const res = await fetch(`${TMDB_BASE}/find/${imdbId}?api_key=${TMDB_API_KEY}&external_source=imdb_id`);
-        const data = await res.json();
-        if (type === "movie" && data.movie_results[0]) return data.movie_results[0].id;
-        if (type === "series" && data.tv_results[0]) return data.tv_results[0].id;
-        return null;
-    } catch { return null; }
+async function jsonFetch(url, fetchImpl = fetch) {
+  const response = await fetchImpl(url, { signal: AbortSignal.timeout(10000) });
+  if (!response.ok) throw new UpstreamError(`Serviço externo retornou HTTP ${response.status}`);
+  return response.json();
 }
 
-async function getClassificacaoBR(tmdbId, type) {
-    try {
-        if (type === "movie") {
-            const res = await fetch(`${TMDB_BASE}/movie/${tmdbId}/release_dates?api_key=${TMDB_API_KEY}`);
-            const data = await res.json();
-            const br = data.results?.find(r => r.iso_3166_1 === "BR");
-            const rel = br?.release_dates?.reverse().find(r => r.certification);
-            return rel?.certification || "";
-        } else {
-            const res = await fetch(`${TMDB_BASE}/tv/${tmdbId}/content_ratings?api_key=${TMDB_API_KEY}`);
-            const data = await res.json();
-            const br = data.results?.find(r => r.iso_3166_1 === "BR");
-            return br?.rating || "";
-        }
-    } catch { return ""; }
+function tmdbUrl(path, key, extra = {}) {
+  const url = new URL(`https://api.themoviedb.org/3${path}`);
+  url.searchParams.set('api_key', key);
+  for (const [name, value] of Object.entries(extra)) url.searchParams.set(name, value);
+  return url.toString();
 }
 
-async function getParentsGuideDetalhado(imdbId) {
-    try {
-        const res = await fetch(`https://www.imdb.com/title/${imdbId}/parentalguide/`, {
-            headers: { "User-Agent": "Mozilla/5.0", "Accept-Language": "pt-BR,en;q=0.9" }
-        });
-        const html = await res.text();
-        const $ = cheerio.load(html);
-        let resultado = {};
-        const secoes = { "Sex & Nudity": "Sexo e Nudez", "Violence & Gore": "Violência e Sangue", "Profanity": "Linguagem Imprópria", "Alcohol, Drugs & Smoking": "Álcool, Drogas e Fumo", "Frightening & Intense Scenes": "Cenas Assustadoras" };
-        $('section').each((i, el) => {
-            const titulo = $(el).find('h3, h2').first().text().trim();
-            for (let [en, pt] of Object.entries(secoes)) {
-                if (titulo.includes(en)) {
-                    let textos = [];
-                    $(el).find('li, div.ipc-html-content-inner-div, p').each((j, p) => {
-                        let t = $(p).text().trim();
-                        if (t.length > 20 && t.length < 800 && !t.includes("Edit")) textos.push(t);
-                    });
-                    textos = [...new Set(textos)].slice(0, 3);
-                    if (textos.length > 0) resultado[pt] = textos;
-                }
-            }
-        });
-        return resultado;
-    } catch { return {}; }
-}
-
-function traduzirTrecho(texto) {
-    return texto.replace(/blood/gi, "sangue").replace(/gore/gi, "mutilação").replace(/mutilation/gi, "mutilação").replace(/torture/gi, "tortura").replace(/sexual content/gi, "conteúdo sexual").replace(/nudity/gi, "nudez");
-}
-
-builder.defineMetaHandler(async ({ type, id }) => {
-  if (type !== 'movie') return { meta: null };
-  try {
-    const KEY = 06bb8fc75a07bd501b3f716efbec5472
-
-    // 1. Acha o filme no TMDB pelo ID do IMDB (tt...)
-    const findRes = await fetch(`https://api.themoviedb.org/3/find/${id}?api_key=${KEY}&language=pt-BR&external_source=imdb_id`);
-    const find = await findRes.json();
-    const tmdbId = find.movie_results?.[0]?.id;
-    if (!tmdbId) return { meta: null };
-
-    // 2. Pega os detalhes + classificação do Brasil
-    const res = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${KEY}&language=pt-BR&append_to_response=release_dates`);
-    const m = await res.json();
-
-    const br = m.release_dates?.results?.find(r => r.iso_3166_1 === 'BR');
-    const cert = br?.release_dates?.[0]?.certification || 'Sem classificação';
-    const motivo = br?.release_dates?.[0]?.note || 'Consulte os detalhes do filme';
-
-    const descricao = `CLASSIFICAÇÃO INDICATIVA: ${cert}\nMOTIVO DETALHADO: ${motivo}\n\n${m.overview || ''}`;
-
-    return {
-      meta: {
-        id: id,
-        type: 'movie',
-        name: m.title,
-        description: descricao,
-        poster: m.poster_path ? 'https://image.tmdb.org/t/p/w500' + m.poster_path : undefined,
-        background: m.backdrop_path ? 'https://image.tmdb.org/t/p/original' + m.backdrop_path : undefined,
-        logo: undefined,
-        releaseInfo: String(m.release_date || '').slice(0,4),
-        runtime: String(m.runtime || ''),
-        genres: (m.genres || []).map(g => g.name),
-      }
-    };
-  } catch (e) {
-    console.error(e);
-    return { meta: null };
+function certificate(data, type) {
+  if (type === 'movie') {
+    const entries = data.release_dates?.results?.find(x => x.iso_3166_1 === 'BR')?.release_dates || [];
+    return entries.find(x => typeof x.certification === 'string' && x.certification.trim())?.certification.trim() || '';
   }
-});
+  return data.content_ratings?.results?.find(x => x.iso_3166_1 === 'BR')?.rating?.trim() || '';
+}
+
+async function getMeta(type, id, key, fetchImpl = fetch) {
+  if (!key) throw new Error('TMDB_API_KEY não configurada');
+  const find = await jsonFetch(tmdbUrl(`/find/${id}`, key, { external_source: 'imdb_id', language: 'pt-BR' }), fetchImpl);
+  const tmdbId = (type === 'movie' ? find.movie_results : find.tv_results)?.[0]?.id;
+  if (!tmdbId) return null;
+  const kind = type === 'movie' ? 'movie' : 'tv';
+  const append = type === 'movie' ? 'release_dates' : 'content_ratings';
+  const [data, cinemeta] = await Promise.all([
+    jsonFetch(tmdbUrl(`/${kind}/${tmdbId}`, key, { language: 'pt-BR', append_to_response: append }), fetchImpl),
+    jsonFetch(`https://v3-cinemeta.strem.io/meta/${type}/${id}.json`, fetchImpl).catch(() => null)
+  ]);
+  const base = cinemeta?.meta && typeof cinemeta.meta === 'object' ? cinemeta.meta : {};
+  if (type === 'series' && !Array.isArray(base.videos)) {
+    throw new UpstreamError('Episódios indisponíveis no Cinemeta');
+  }
+  const cert = certificate(data, type);
+  const classification = `Classificação indicativa no Brasil: ${cert || 'não informada no TMDB'}.`;
+  const description = [classification, 'Motivo da classificação: não disponível no TMDB.', data.overview || base.description || ''].filter(Boolean).join('\n\n');
+  const meta = {
+    ...base,
+    id,
+    type,
+    name: data.title || data.name || base.name || id,
+    description,
+    genres: data.genres?.map(g => g.name).filter(Boolean) || base.genres || []
+  };
+  if (data.poster_path) meta.poster = `https://image.tmdb.org/t/p/w500${data.poster_path}`;
+  if (data.backdrop_path) meta.background = `https://image.tmdb.org/t/p/original${data.backdrop_path}`;
+  const date = data.release_date || data.first_air_date;
+  if (date) meta.releaseInfo = date.slice(0, 4);
+  if (type === 'movie' && data.runtime) meta.runtime = `${data.runtime} min`;
+  return meta;
+}
+
+function send(res, status, value) {
+  res.statusCode = status;
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.end(JSON.stringify(value));
+}
+
+async function handler(req, res) {
+  if (req.method === 'OPTIONS') return send(res, 204, null);
+  if (req.method !== 'GET') return send(res, 405, { error: 'Método não permitido' });
+  const path = new URL(req.url, 'http://localhost').pathname;
+  if (path === '/' || path === '/manifest.json') return send(res, 200, manifest);
+  const match = path.match(/^\/meta\/(movie|series)\/(tt\d+)\.json$/);
+  if (!match) return send(res, 404, { error: 'Rota não encontrada' });
+  if (!process.env.TMDB_API_KEY) return send(res, 503, { error: 'TMDB_API_KEY não configurada no servidor' });
+  try {
+    const meta = await getMeta(match[1], match[2], process.env.TMDB_API_KEY);
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    return send(res, 200, { meta });
+  } catch (error) {
+    // Never log request URLs: TMDB credentials are in the query string.
+    console.error('Falha ao consultar metadados:', error instanceof UpstreamError ? error.message : error.name);
+    return send(res, 502, { error: 'Não foi possível consultar os metadados. Tente novamente.' });
+  }
+}
+
+module.exports = handler;
+module.exports.getMeta = getMeta;
+module.exports.certificate = certificate;
+module.exports.manifest = manifest;
+
+if (require.main === module) {
+  const port = Number(process.env.PORT) || 3000;
+  http.createServer(handler).listen(port, () => console.log(`Addon disponível em http://localhost:${port}/manifest.json`));
+}
